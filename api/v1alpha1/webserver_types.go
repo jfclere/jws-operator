@@ -20,32 +20,22 @@ type WebServerSpec struct {
 	// The desired number of replicas for the application
 	// +kubebuilder:validation:Minimum=0
 	Replicas int32 `json:"replicas"`
+	// Environment Variables for deployment
+	EnvironmentVariables []corev1.EnvVar `json:"environmentVariables,omitempty"`
 	// Use Session Clustering
 	UseSessionClustering bool `json:"useSessionClustering,omitempty"`
-	// Route behaviour:[tls]hostname/NONE or empty.
-	RouteHostname string `json:"routeHostname,omitempty"`
-	// certificateVerification for tomcat configuration: required/optional or empty.
-	CertificateVerification string `json:"certificateVerification,omitempty"`
-	// TLSSecret secret containing server.cert the server certificate, server.key the server key and optional ca.cert the CA cert of the client certificates
-	TLSSecret string `json:"tlsSecret,omitempty"`
-	// TLSPassword passphrase for the key in the client.key
-	TLSPassword string `json:"tlsPassword,omitempty"`
+	// TLS configuration
+	TLSConfig TLSConfig `json:"tlsConfig,omitempty"`
+	// Persistent logs configuration
+	PersistentLogsConfig PersistentLogs `json:"persistentLogs,omitempty"`
 	// (Deployment method 1) Application image
 	WebImage *WebImageSpec `json:"webImage,omitempty"`
 	// (Deployment method 2) Imagestream
 	WebImageStream *WebImageStreamSpec `json:"webImageStream,omitempty"`
 	// Configuration of the resources used by the WebServer, ie CPU and memory, use limits and requests
-	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
-	//If true operator will create a PVC to save the logs.
-	PersistentLogs bool `json:"persistentLogs,omitempty"`
-	//If true operator will log tomcat's access logs
-	EnableAccessLogs bool `json:"enableAccessLogs,omitempty"`
+	PodResources corev1.ResourceRequirements `json:"podResources,omitempty"`
 	// IsNotJWS boolean that specifies if the image is JWS or not.
 	IsNotJWS bool `json:"isNotJWS,omitempty"`
-	// VolumeName is the name of pv we eant to bound
-	VolumeName string `json:"volumeName,omitempty"`
-	// StorageClass name of the storage class we want to use for the bound
-	StorageClass string `json:"storageClass,omitempty"`
 	// SecurityContext defines the security capabilities required to run the application.
 	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
@@ -100,6 +90,29 @@ type WebImageStreamSpec struct {
 	WebServerHealthCheck *WebServerHealthCheckSpec `json:"webServerHealthCheck,omitempty"`
 }
 
+// TLS settings
+type TLSConfig struct {
+	// TLSSecret secret containing server.cert the server certificate, server.key the server key and optional ca.cert the CA cert of the client certificates
+	TLSSecret string `json:"tlsSecret,omitempty"`
+	// TLSPassword passphrase for the key in the client.key
+	TLSPassword string `json:"tlsPassword,omitempty"`
+	// certificateVerification for tomcat configuration: required/optional or empty.
+	CertificateVerification string `json:"certificateVerification,omitempty"`
+	// Route behaviour:[tls]hostname/NONE or empty.
+	RouteHostname string `json:"routeHostname,omitempty"`
+}
+
+type PersistentLogs struct {
+	//If true operator will log tomcat's catalina logs
+	CatalinaLogs bool `json:"catalinaLogs,omitempty"`
+	//If true operator will log tomcat's access logs
+	AccessLogs bool `json:"enableAccessLogs,omitempty"`
+	// VolumeName is the name of pv we eant to bound
+	VolumeName string `json:"volumeName,omitempty"`
+	// StorageClass name of the storage class we want to use for the bound
+	StorageClass string `json:"storageClass,omitempty"`
+}
+
 // (Optional) Source code information
 type WebSourcesSpec struct {
 	// URL for the repository of the application sources
@@ -110,6 +123,8 @@ type WebSourcesSpec struct {
 	ContextDir string `json:"contextDir,omitempty"`
 	// (Optional) Sources related parameters
 	WebSourcesParams *WebSourcesParamsSpec `json:"webSourcesParams,omitempty"`
+	// Webhook secrets configuration
+	WebhookSecrets *WebhookSecrets `json:"webhookSecrets,omitempty"`
 }
 
 // (Optional) Sources related parameters
@@ -118,10 +133,19 @@ type WebSourcesParamsSpec struct {
 	MavenMirrorURL string `json:"mavenMirrorUrl,omitempty"`
 	// Directory where the jar/war is created
 	ArtifactDir string `json:"artifactDir,omitempty"`
-	// Secret for a generic web hook
+	// (Deprecated - Use WebhookSecrets instead) Secret string for a generic web hook
 	GenericWebhookSecret string `json:"genericWebhookSecret,omitempty"`
-	// Secret for a Github web hook
+	// (Deprecated - Use WebhookSecrets instead) Secret string for a Github web hook
 	GithubWebhookSecret string `json:"githubWebhookSecret,omitempty"`
+}
+
+type WebhookSecrets struct {
+	// Secret for generic webhook
+	Generic string `json:"generic,omitempty"`
+	// Secret for Github webhook
+	Github string `json:"github,omitempty"`
+	// Secret for Gitlab webhook
+	Gitlab string `json:"gitlab,omitempty"`
 }
 
 type WebServerHealthCheckSpec struct {

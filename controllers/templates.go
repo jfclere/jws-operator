@@ -208,12 +208,12 @@ func (r *WebServerReconciler) generatePersistentVolumeClaimForLogging(webServer 
 		},
 	}
 
-	if webServer.Spec.VolumeName != "" {
-		pvc.Spec.VolumeName = webServer.Spec.VolumeName
+	if webServer.Spec.PersistentLogsConfig.VolumeName != "" {
+		pvc.Spec.VolumeName = webServer.Spec.PersistentLogsConfig.VolumeName
 	}
 
-	if webServer.Spec.StorageClass != "" {
-		pvc.Spec.StorageClassName = &webServer.Spec.StorageClass
+	if webServer.Spec.PersistentLogsConfig.StorageClass != "" {
+		pvc.Spec.StorageClassName = &webServer.Spec.PersistentLogsConfig.StorageClass
 	}
 
 	controllerutil.SetControllerReference(webServer, pvc, r.Scheme)
@@ -523,7 +523,39 @@ func (r *WebServerReconciler) generateBuildTriggerPolicy(webServer *webserversv1
 	sources := webServer.Spec.WebImageStream.WebSources
 	if sources != nil {
 		params := sources.WebSourcesParams
-		if params != nil {
+
+		if sources.WebhookSecrets != nil {
+			if sources.WebhookSecrets.Generic != "" {
+				buildTriggerPolicies = append(buildTriggerPolicies, buildv1.BuildTriggerPolicy{
+					Type: "Generic",
+					GenericWebHook: &buildv1.WebHookTrigger{
+						SecretReference: &buildv1.SecretLocalReference{
+							Name: sources.WebhookSecrets.Generic,
+						},
+					},
+				})
+			}
+			if sources.WebhookSecrets.Github != "" {
+				buildTriggerPolicies = append(buildTriggerPolicies, buildv1.BuildTriggerPolicy{
+					Type: "GitHub",
+					GitHubWebHook: &buildv1.WebHookTrigger{
+						SecretReference: &buildv1.SecretLocalReference{
+							Name: sources.WebhookSecrets.Github,
+						},
+					},
+				})
+			}
+			if sources.WebhookSecrets.Gitlab != "" {
+				buildTriggerPolicies = append(buildTriggerPolicies, buildv1.BuildTriggerPolicy{
+					Type: "GitLab",
+					GitLabWebHook: &buildv1.WebHookTrigger{
+						SecretReference: &buildv1.SecretLocalReference{
+							Name: sources.WebhookSecrets.Gitlab,
+						},
+					},
+				})
+			}
+		} else if params != nil {
 			if params.GithubWebhookSecret != "" {
 				buildTriggerPolicies = append(buildTriggerPolicies, buildv1.BuildTriggerPolicy{
 					Type: "GitHub",
@@ -627,7 +659,7 @@ func (r *WebServerReconciler) generateRoute(webServer *webserversv1alpha1.WebSer
 		"description": "Route for application's http service.",
 	}
 	route := &routev1.Route{}
-	if webServer.Spec.RouteHostname == "" {
+	if webServer.Spec.TLSConfig.RouteHostname == "" {
 		route = &routev1.Route{
 			ObjectMeta: objectMeta,
 			Spec: routev1.RouteSpec{
@@ -640,7 +672,7 @@ func (r *WebServerReconciler) generateRoute(webServer *webserversv1alpha1.WebSer
 		route = &routev1.Route{
 			ObjectMeta: objectMeta,
 			Spec: routev1.RouteSpec{
-				Host: webServer.Spec.RouteHostname,
+				Host: webServer.Spec.TLSConfig.RouteHostname,
 				To: routev1.RouteTargetReference{
 					Name: webServer.Spec.ApplicationName,
 				},
@@ -658,7 +690,7 @@ func (r *WebServerReconciler) generateSecureRoute(webServer *webserversv1alpha1.
 		"description": "Route for application's https service.",
 	}
 	route := &routev1.Route{}
-	if len(webServer.Spec.RouteHostname) <= 3 {
+	if len(webServer.Spec.TLSConfig.RouteHostname) <= 3 {
 		route = &routev1.Route{
 			ObjectMeta: objectMeta,
 			Spec: routev1.RouteSpec{
@@ -674,7 +706,7 @@ func (r *WebServerReconciler) generateSecureRoute(webServer *webserversv1alpha1.
 		route = &routev1.Route{
 			ObjectMeta: objectMeta,
 			Spec: routev1.RouteSpec{
-				Host: webServer.Spec.RouteHostname[4:],
+				Host: webServer.Spec.TLSConfig.RouteHostname[4:],
 				To: routev1.RouteTargetReference{
 					Name: webServer.Spec.ApplicationName,
 				},
@@ -745,7 +777,7 @@ func (r *WebServerReconciler) generatePodTemplate(webServer *webserversv1alpha1.
 				ImagePullPolicy: "Always",
 				ReadinessProbe:  r.generateReadinessProbe(webServer, health),
 				LivenessProbe:   r.generateLivenessProbe(webServer, health),
-				Resources:       generateResources(webServer.Spec.Resources),
+				Resources:       webServer.Spec.PodResources,
 				Ports: []corev1.ContainerPort{{
 					Name:          "jolokia",
 					ContainerPort: 8778,
@@ -777,9 +809,7 @@ func (r *WebServerReconciler) generatePodTemplate(webServer *webserversv1alpha1.
 		template.Spec.Containers[0].Args = append(template.Spec.Containers[0].Args, "-c", "/opt/start/start.sh")
 	}
 	// if the user specified the resources directive propagate it to the container (required for HPA).
-	if webServer.Spec.Resources != nil {
-		template.Spec.Containers[0].Resources = *webServer.Spec.Resources
-	}
+	template.Spec.Containers[0].Resources = webServer.Spec.PodResources
 	return template
 }
 
@@ -870,26 +900,28 @@ func (r *WebServerReconciler) generateEnvVars(webServer *webserversv1alpha1.WebS
 			Value: value,
 		},
 	}
-	if webServer.Spec.EnableAccessLogs {
+	if webServer.Spec.PersistentLogsConfig.AccessLogs {
 		env = append(env, corev1.EnvVar{
 			Name:  "ENABLE_ACCESS_LOG",
 			Value: "true",
 		})
 	}
-	if strings.HasPrefix(webServer.Spec.RouteHostname, "tls") || webServer.Spec.UseSessionClustering || webServer.Spec.EnableAccessLogs {
-		// Add parameter USE_SESSION_CLUSTERING
+	if strings.HasPrefix(webServer.Spec.TLSConfig.RouteHostname, "tls") || webServer.Spec.UseSessionClustering || webServer.Spec.PersistentLogsConfig.AccessLogs {
 		env = append(env, corev1.EnvVar{
 			Name:  "ENV_FILES",
 			Value: "/env/my-files/test.sh",
 		})
 	}
-	if webServer.Spec.PersistentLogs {
+	if webServer.Spec.PersistentLogsConfig.CatalinaLogs {
 		//custum logging.properties path
 		env = append(env, corev1.EnvVar{
 			Name:  "CATALINA_LOGGING_CONFIG",
 			Value: "-Djava.util.logging.config.file=/opt/operator_conf/logging.properties",
 		})
 	}
+
+	env = append(env, webServer.Spec.EnvironmentVariables...)
+
 	return env
 }
 
@@ -897,7 +929,7 @@ func (r *WebServerReconciler) generateEnvVars(webServer *webserversv1alpha1.WebS
 func (r *WebServerReconciler) generateVolumeMounts(webServer *webserversv1alpha1.WebServer) []corev1.VolumeMount {
 	var volm []corev1.VolumeMount
 
-	if webServer.Spec.PersistentLogs {
+	if webServer.Spec.PersistentLogsConfig.CatalinaLogs || webServer.Spec.PersistentLogsConfig.AccessLogs {
 		volm = append(volm, corev1.VolumeMount{
 			Name:      "config-volume",
 			MountPath: "/opt/operator_conf/logging.properties",
@@ -909,7 +941,7 @@ func (r *WebServerReconciler) generateVolumeMounts(webServer *webserversv1alpha1
 		})
 	}
 
-	if strings.HasPrefix(webServer.Spec.RouteHostname, "tls") || webServer.Spec.UseSessionClustering || webServer.Spec.EnableAccessLogs {
+	if strings.HasPrefix(webServer.Spec.TLSConfig.RouteHostname, "tls") || webServer.Spec.UseSessionClustering || webServer.Spec.PersistentLogsConfig.AccessLogs {
 		volm = append(volm, corev1.VolumeMount{
 			Name:      "webserver-" + webServer.Name,
 			MountPath: "/env/my-files",
@@ -946,7 +978,7 @@ func (r *WebServerReconciler) generateVolumeMounts(webServer *webserversv1alpha1
 		}
 	}
 
-	if webServer.Spec.TLSSecret != "" {
+	if webServer.Spec.TLSConfig.TLSSecret != "" {
 		volm = append(volm, corev1.VolumeMount{
 			Name:      "webserver-tls" + webServer.Name,
 			MountPath: "/tls",
@@ -960,7 +992,7 @@ func (r *WebServerReconciler) generateVolumeMounts(webServer *webserversv1alpha1
 // Create the Volumes
 func (r *WebServerReconciler) generateVolumes(webServer *webserversv1alpha1.WebServer) []corev1.Volume {
 	var vol []corev1.Volume
-	if webServer.Spec.PersistentLogs {
+	if webServer.Spec.PersistentLogsConfig.CatalinaLogs || webServer.Spec.PersistentLogsConfig.AccessLogs {
 		vol = append(vol, corev1.Volume{
 			Name: "config-volume",
 			VolumeSource: corev1.VolumeSource{
@@ -982,7 +1014,7 @@ func (r *WebServerReconciler) generateVolumes(webServer *webserversv1alpha1.WebS
 		})
 	}
 
-	if strings.HasPrefix(webServer.Spec.RouteHostname, "tls") || webServer.Spec.UseSessionClustering || webServer.Spec.EnableAccessLogs {
+	if strings.HasPrefix(webServer.Spec.TLSConfig.RouteHostname, "tls") || webServer.Spec.UseSessionClustering || webServer.Spec.PersistentLogsConfig.AccessLogs {
 		vol = append(vol, corev1.Volume{
 			Name: "webserver-" + webServer.Name,
 			VolumeSource: corev1.VolumeSource{
@@ -1048,12 +1080,12 @@ func (r *WebServerReconciler) generateVolumes(webServer *webserversv1alpha1.WebS
 		}
 	}
 
-	if webServer.Spec.TLSSecret != "" {
+	if webServer.Spec.TLSConfig.TLSSecret != "" {
 		vol = append(vol, corev1.Volume{
 			Name: "webserver-tls" + webServer.Name,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: webServer.Spec.TLSSecret,
+					SecretName: webServer.Spec.TLSConfig.TLSSecret,
 				},
 			},
 		})
@@ -1132,7 +1164,7 @@ func (r *WebServerReconciler) generateCommandForASFStart(webServer *webserversv1
 
 		"# Copy the war in webapps (probably we can use a ENV_FILES for that)\n" +
 		"cp /deployments/*.war /deployments/webapps/ || true\n"
-	if webServer.Spec.PersistentLogs {
+	if webServer.Spec.PersistentLogsConfig.CatalinaLogs || webServer.Spec.PersistentLogsConfig.AccessLogs {
 		cmd["start.sh"] = cmd["start.sh"] + "#operator's configuration for logging\n" +
 			"export JAVA_OPTS=\"-Dcatalina.base=. -Djava.security.egd=file:/dev/urandom -Djava.util.logging.manager=org.apache.juli.ClassLoaderLogManager -Djava.util.logging.config.file=/opt/operator_conf/logging.properties -Dpod_name=\"$HOSTNAME\"\"\n"
 	}
@@ -1171,7 +1203,7 @@ func (r *WebServerReconciler) generateLivenessProbeScript(webServer *webserversv
 func (r *WebServerReconciler) generateCommandForServerXml(webServer *webserversv1alpha1.WebServer) map[string]string {
 	cmd := make(map[string]string)
 	connector := ""
-	if strings.HasPrefix(webServer.Spec.RouteHostname, "tls") {
+	if strings.HasPrefix(webServer.Spec.TLSConfig.RouteHostname, "tls") {
 		// "/tls" is the dir in which the secret's contents are mounted to the pod
 		connector +=
 			"https=\"<!-- No HTTPS configuration discovered -->\"\n" +
@@ -1180,8 +1212,8 @@ func (r *WebServerReconciler) generateCommandForServerXml(webServer *webserversv
 				"https=\"" +
 				"<Connector port=\\\"8443\\\" protocol=\\\"HTTP/1.1\\\" " +
 				"maxThreads=\\\"200\\\" SSLEnabled=\\\"true\\\"> "
-		if webServer.Spec.CertificateVerification == "required" || webServer.Spec.CertificateVerification == "optional" {
-			connector += "<SSLHostConfig caCertificateFile=\\\"/tls/ca.crt\\\" certificateVerification=\\\"" + webServer.Spec.CertificateVerification + "\\\"> "
+		if webServer.Spec.TLSConfig.CertificateVerification == "required" || webServer.Spec.TLSConfig.CertificateVerification == "optional" {
+			connector += "<SSLHostConfig caCertificateFile=\\\"/tls/ca.crt\\\" certificateVerification=\\\"" + webServer.Spec.TLSConfig.CertificateVerification + "\\\"> "
 		} else {
 			connector += "<SSLHostConfig caCertificateFile=\\\"/tls/ca.crt\\\"> "
 		}
@@ -1193,8 +1225,8 @@ func (r *WebServerReconciler) generateCommandForServerXml(webServer *webserversv
 			"https=\"" +
 			"<Connector port=\\\"8443\\\" protocol=\\\"HTTP/1.1\\\" " +
 			"maxThreads=\\\"200\\\" SSLEnabled=\\\"true\\\"> "
-		if webServer.Spec.CertificateVerification == "required" || webServer.Spec.CertificateVerification == "optional" {
-			connector += "<SSLHostConfig " + "certificateVerification=\\\"" + webServer.Spec.CertificateVerification + "\\\"> "
+		if webServer.Spec.TLSConfig.CertificateVerification == "required" || webServer.Spec.TLSConfig.CertificateVerification == "optional" {
+			connector += "<SSLHostConfig " + "certificateVerification=\\\"" + webServer.Spec.TLSConfig.CertificateVerification + "\\\"> "
 		} else {
 			connector += "<SSLHostConfig> "
 		}
@@ -1228,7 +1260,7 @@ func (r *WebServerReconciler) generateCommandForServerXml(webServer *webserversv
 	} else {
 		cmd["test.sh"] = cmd["test.sh"] + connector
 	}
-	if webServer.Spec.EnableAccessLogs {
+	if webServer.Spec.PersistentLogsConfig.AccessLogs {
 		cmd["test.sh"] = cmd["test.sh"] + "grep -q directory='\"/proc/self/fd\"' ${FILE}\n" +
 			"if [ $? -eq 0 ]; then\n" +
 			"sed -i 's|directory=\"/proc/self/fd\"|directory=\"/opt/tomcat_logs\"|g' ${FILE}\n" +
@@ -1268,29 +1300,9 @@ func (r *WebServerReconciler) generateLoggingProperties(webServer *webserversv1a
 
 		"1catalina.org.apache.juli.AsyncFileHandler.level = FINE\n" +
 		"1catalina.org.apache.juli.AsyncFileHandler.directory = /opt/tomcat_logs\n" +
-		"1catalina.org.apache.juli.AsyncFileHandler.prefix = catalina${pod_name}.\n" +
+		"1catalina.org.apache.juli.AsyncFileHandler.prefix = catalina-${pod_name}.\n" +
 		"1catalina.org.apache.juli.AsyncFileHandler.maxDays = 90"
 	return cmd
-}
-
-// generateResources supplements a default ResourceRequirements and returns it.
-func generateResources(r *corev1.ResourceRequirements) corev1.ResourceRequirements {
-	rTemplate := corev1.ResourceRequirements{
-		Limits:   nil,
-		Requests: nil,
-	}
-
-	if r != nil {
-		if r.Limits != nil && len(r.Limits) > 0 {
-			rTemplate.Limits = r.Limits
-		}
-
-		if r.Requests != nil && len(r.Requests) > 0 {
-			rTemplate.Requests = r.Requests
-		}
-	}
-
-	return rTemplate
 }
 
 // generateSecurityContext supplements a default SecurityContext and returns it.
