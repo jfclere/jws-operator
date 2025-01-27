@@ -378,22 +378,26 @@ func (r *WebServerReconciler) generateDeployment(webServer *webserversv1alpha1.W
 func (r *WebServerReconciler) generateUpdatedDeployment(webServer *webserversv1alpha1.WebServer, deployment *kbappsv1.Deployment, dockerImageRepository string) {
 
 	replicas := int32(webServer.Spec.Replicas)
-	applicationImage := ""
+	applicationImage := dockerImageRepository
 	objectMeta := r.generateObjectMeta(webServer, webServer.Spec.ApplicationName)
 	objectMeta.Labels = r.generateLabelsForWeb(webServer)
+	objectMeta.Annotations = r.generateAnnotationsDeployment(webServer)
 
-	if webServer.Spec.WebImage != nil && webServer.Spec.WebImage.ApplicationImage != "" {
-		applicationImage = webServer.Spec.WebImage.ApplicationImage
-	} else if webServer.Spec.WebImage.WebApp != nil {
-		// With a builder we use the WebAppWarImage (webServer.Spec.WebImage.WebApp.WebAppWarImage)
-		applicationImage = webServer.Spec.WebImage.WebApp.WebAppWarImage
-	} else {
-		applicationImage = dockerImageRepository
-
-		objectMeta.Annotations = r.generateAnnotationsDeployment(webServer)
+	if applicationImage == "" {
+		/* is guessing it OK ? */
+		if webServer.Spec.WebImage != nil && webServer.Spec.WebImage.ApplicationImage != "" {
+			log.Info("(1)generateUpdatedDeployment " + applicationImage)
+			applicationImage = webServer.Spec.WebImage.ApplicationImage
+			log.Info("(1)generateUpdatedDeployment " + applicationImage)
+		} else if webServer.Spec.WebImage != nil && webServer.Spec.WebImage.WebApp != nil {
+			// With a builder we use the WebAppWarImage (webServer.Spec.WebImage.WebApp.WebAppWarImage)
+			log.Info("(2)generateUpdatedDeployment " + applicationImage)
+			applicationImage = webServer.Spec.WebImage.WebApp.WebAppWarImage
+			log.Info("(2)generateUpdatedDeployment " + applicationImage)
+		}
 	}
 
-	log.Info("generateUpdatedDeployment")
+	log.Info("generateUpdatedDeployment " + applicationImage)
 	podTemplateSpec := r.generatePodTemplate(webServer, applicationImage)
 	deployment.ObjectMeta = objectMeta
 	spec := kbappsv1.DeploymentSpec{

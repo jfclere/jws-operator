@@ -380,7 +380,8 @@ func (r *WebServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		} else {
 			if deployment.ObjectMeta.Labels["webserver-hash"] != currentHash {
 				// Just Update and requeue
-				r.generateUpdatedDeployment(webServer, deployment, "")
+				log.Info("(1) WebServe generateUpdatedDeployment(webServer: " + deployment.Name + " in " + deployment.Namespace + " using: " + deployment.Spec.Template.Spec.Containers[0].Image)
+				r.generateUpdatedDeployment(webServer, deployment, deployment.Spec.Template.Spec.Containers[0].Image)
 				deployment.ObjectMeta.Labels["webserver-hash"] = currentHash
 				err = r.Client.Update(ctx, deployment)
 				if err != nil {
@@ -726,6 +727,8 @@ func (r *WebServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		} else {
 			if deployment.Labels["webserver-hash"] != currentHash {
 				// Just Update and requeue
+				log.Info("(2) WebServe generateUpdatedDeployment(webServer: " + deployment.Name + " in " + deployment.Namespace + " using: " + deployment.Spec.Template.Spec.Containers[0].Image)
+				log.Info("(2) WebServe generateUpdatedDeployment(webServer: " + deployment.Name + " in " + deployment.Namespace + " using: " + dockerImageRepository)
 				r.generateUpdatedDeployment(webServer, deployment, dockerImageRepository)
 				deployment.ObjectMeta.Labels["webserver-hash"] = currentHash
 				err = r.Client.Update(ctx, deployment)
